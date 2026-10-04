@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>AI Code</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@vscode/codicons@0.0.36/dist/codicon.css">
+<link rel="stylesheet" href="styles.css"></head><body>
+<div id="title"><span>File</span><span>Edit</span><span>Selection</span><span>View</span><span>Go</span><span>Run</span><span>Terminal</span><span>Help</span><b>AI Code - Visual Studio Code</b></div>
+<div id="app">
+  <div id="act"><i class="codicon codicon-files on"></i><i class="codicon codicon-search"></i><i class="codicon codicon-source-control"></i><i class="codicon codicon-extensions"></i></div>
+  <div id="side"><div class="h">EXPLORER<i id="new" class="codicon codicon-new-file" title="New file"></i></div><div id="tree"></div></div>
+  <div id="main">
+    <div id="tabs"></div><div id="editor"></div>
+    <div id="diff" hidden><div class="bar"><span id="dn"></span><button id="ac">Accept</button><button id="rj">Reject</button><button id="aa">Accept all</button></div><div id="dv"></div></div>
+    <div id="panel"><div class="h"><span data-t="out" class="on">OUTPUT</span><span data-t="term">TERMINAL</span><span data-t="pv">PREVIEW</span></div>
+      <pre id="out"></pre><div id="term" hidden><div id="tl"></div><div class="pr"><span>$</span><input id="ti" autocomplete="off" spellcheck="false"></div></div>
+      <iframe id="pv" sandbox="allow-scripts allow-modals" hidden></iframe></div>
+  </div>
+  <div id="chat"><div class="h">AI AGENTS</div><div id="msgs"></div>
+    <div id="box"><textarea id="in" placeholder="Describe what to build or change"></textarea><button id="go">Send</button></div>
+  </div>
+</div>
+<div id="status"><span>main</span><span>gpt-oss-120b + Qwen3.8 27B x4</span><span id="pos" class="r">Ln 1, Col 1</span><span id="lg">plaintext</span></div>
+<div id="qp" hidden><input id="qi" placeholder="Type a file name, or press F1 for commands"><div id="ql"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+<script src="app.js"></script>
+</body></html>

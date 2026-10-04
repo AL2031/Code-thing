@@ -1,0 +1,58 @@
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;background:#1e1e1e;color:#ccc;font:13px "Segoe UI",system-ui,sans-serif;overflow:hidden}
+body{display:flex;flex-direction:column}
+#title{height:30px;background:#3c3c3c;display:flex;align-items:center;gap:14px;padding:0 12px}
+#title b{margin:0 auto;font-weight:400;color:#999}
+#app{flex:1;display:flex;min-height:0}
+#act{width:48px;background:#333;display:flex;flex-direction:column;align-items:center;padding-top:6px}
+#act i{font-size:24px;padding:12px;color:#858585;cursor:pointer}
+#act i.on{color:#fff;box-shadow:inset 2px 0 #fff}
+#side{width:240px;background:#252526;display:flex;flex-direction:column}
+.h{height:35px;padding:0 12px;display:flex;align-items:center;gap:14px;font-size:11px;color:#bbb;flex:none}
+.h i{margin-left:auto;font-size:16px;cursor:pointer}
+.h .on{color:#fff;padding:9px 0;border-bottom:1px solid #007acc}
+.h span{cursor:pointer}
+#tree{overflow:auto}
+#tree div{padding:3px 12px 3px 22px;cursor:pointer;display:flex;justify-content:space-between}
+#tree div:hover{background:#2a2d2e}
+#tree div.on{background:#37373d;color:#fff}
+#tree em{color:#73c991;font-style:normal;font-size:11px}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#tabs{height:35px;background:#252526;display:flex;overflow-x:auto;flex:none}
+.tab{display:flex;align-items:center;gap:8px;padding:0 12px;background:#2d2d2d;color:#969696;border-right:1px solid #252526;border-top:1px solid transparent;cursor:pointer;white-space:nowrap}
+.tab.on{background:#1e1e1e;color:#fff;border-top-color:#007acc}
+.tab i:hover{background:#444;border-radius:3px}
+#editor{flex:1;min-height:0}
+#panel{height:160px;border-top:1px solid #3c3c3c;display:flex;flex-direction:column}
+#out{flex:1;overflow:auto;padding:4px 12px;font:12px Consolas,"Courier New",monospace;color:#bbb}
+#chat{width:340px;background:#252526;border-left:1px solid #3c3c3c;display:flex;flex-direction:column}
+#msgs{flex:1;overflow:auto;padding:10px}
+.m{margin-bottom:10px;padding:8px 10px;background:#2d2d30;border-radius:4px;white-space:pre-wrap;line-height:1.4}
+.m.u{background:#094771;color:#fff}
+#box{padding:10px;display:flex;flex-direction:column;gap:6px}
+#in{height:80px;resize:none;background:#3c3c3c;border:1px solid #3c3c3c;color:#ccc;padding:6px;font:inherit}
+#in:focus{outline:1px solid #007acc;outline-offset:-1px}
+#go{background:#0e639c;color:#fff;border:0;padding:6px;cursor:pointer}
+#go:hover{background:#1177bb}
+#go:disabled{opacity:.5;cursor:default}
+#status{height:22px;background:#007acc;color:#fff;display:flex;gap:16px;align-items:center;padding:0 10px;font-size:12px}
+.r{margin-left:auto}
+
+[hidden]{display:none!important}
+#panel.big{height:340px}
+#term{overflow:auto;padding:4px 12px;font:12px Consolas,"Courier New",monospace;flex:1;min-height:0}
+#tl{white-space:pre-wrap}
+.pr{display:flex;gap:6px}
+#ti{flex:1;background:none;border:0;color:#ccc;font:inherit;outline:0}
+#pv{border:0;background:#fff;width:100%;flex:1;min-height:0}
+#diff{flex:1;min-height:0;display:flex;flex-direction:column}
+#dv{flex:1;min-height:0}
+.bar{height:35px;display:flex;align-items:center;gap:8px;padding:0 12px;background:#252526;flex:none}
+.bar span{margin-right:auto}
+.bar button{background:#0e639c;color:#fff;border:0;padding:4px 10px;cursor:pointer}
+.bar #rj{background:#5a1d1d}
+#qp{position:fixed;top:36px;left:50%;transform:translateX(-50%);width:560px;max-width:94vw;background:#252526;border:1px solid #454545;z-index:9;box-shadow:0 4px 16px #0008}
+#qi{width:100%;background:#3c3c3c;border:1px solid #007acc;color:#ccc;padding:6px 8px;font:inherit;outline:0}
+#ql{max-height:260px;overflow:auto}
+#ql div{padding:4px 10px;cursor:pointer}
+#ql div.on,#ql div:hover{background:#04395e;color:#fff}
