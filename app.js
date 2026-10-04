@@ -2,7 +2,7 @@ const $ = s => document.querySelector(s), ARCH = 'openai/gpt-oss-120b', QW = 'qw
 let files = JSON.parse(localStorage.ide || 'null') || { 'index.html': '<h1>Hello</h1>\n<script src="script.js"></script>', 'script.js': 'console.log("hello")' };
 let tabs = [Object.keys(files)[0]], cur = tabs[0], ed, mod = {}, pend = {}, rv, dd;
 const save = () => localStorage.ide = JSON.stringify(files);
-const lang = p => ({ js: 'javascript', html: 'html', css: 'css', json: 'json', py: 'python', md: 'markdown' })[p.split('.').pop()] || 'plaintext';
+const lang = p => ({ js: 'javascript', html: 'html', css: 'css', json: 'json', py: 'python', md: 'markdown', ts: 'typescript', sh: 'shell' })[p.split('.').pop()] || 'plaintext';
 
 function log(t) { const o = $('#out'); o.textContent += t + '\n'; o.scrollTop = 1e9 }
 function say(t, c = '') { const d = document.createElement('div'); d.className = 'm ' + c; d.textContent = t; $('#msgs').append(d); $('#msgs').scrollTop = 1e9 }
@@ -60,13 +60,24 @@ async function llm(model, sys, user, json) {
 }
 const parse = t => {
   t = t.replace(/<think>[\s\S]*?<\/think>/g, '');
-  try { return JSON.parse(t) } catch { return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)) }
+  try { return JSON.parse(t) } catch {
+    try { return JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)) }
+    catch { throw new Error(t.trim() ? 'Model returned invalid or cut-off JSON (likely hit the token limit - try a smaller request)' : 'Model returned an empty reply (reasoning may have used the whole token budget) - try again') }
+  }
 };
-const ctx = () => Object.entries({ ...files, ...pend }).map(([p, c]) => `### ${p}\n${c.slice(0, 5000)}`).join('\n\n');
+// Files the AI may edit (pending, or named in `own`) are sent in full. Others are cut and clearly marked,
+// so a model can never "fix" a file by writing back a truncated copy.
+const ctx = (own = []) => Object.entries({ ...files, ...pend }).map(([p, c]) => {
+  const full = p in pend || own.includes(p) || c.length <= 5000;
+  return `### ${p}${full ? '' : ' [TRUNCATED PREVIEW - do not return this file]'}\n${full ? c : c.slice(0, 5000)}`;
+}).join('\n\n');
 function apply(list) {
   for (const f of list || []) {
-    if (!f.path || typeof f.content !== 'string') continue;
-    pend[f.path] = f.content;
+    const p = String(f?.path || '').replace(/^(\.?\/)+/, '').replace(/\\/g, '/');
+    if (!p || p.split('/').includes('..')) continue;
+    const c = typeof f.content === 'string' ? f.content : f.content != null ? JSON.stringify(f.content, null, 2) : null;
+    if (c == null) continue;
+    pend[p] = c;
   }
   tree();
 }
@@ -84,13 +95,13 @@ async function run(req) {
     const fl = (t.files || []).join(', ');
     log(`Coder ${i + 1} (Qwen3.8 27B): ${fl}`);
     const r = parse(await llm(QW, `${ENV} You are coder ${i + 1}. Write only your own files, complete and working. ${FILES}`,
-      `Project files:\n${ctx()}\n\nContract:\n${plan.contract}\n\nYour files: ${fl}\nTask: ${t.instruction}\nOverall request: ${req}`, 1));
+      `Project files:\n${ctx(t.files || [])}\n\nContract:\n${plan.contract}\n\nYour files: ${fl}\nTask: ${t.instruction}\nOverall request: ${req}`, 1));
     apply(r.files); log(`Coder ${i + 1} done`); return r.files || [];
   }));
   if (out.flat().length) {
     log('Fixer (Qwen3.8 27B): reviewing');
     const r = parse(await llm(QW,
-      `You review code written by a team. Fix bugs, mismatched names between files, and missing imports. Return only files that need changes ({"files":[]} if none). ${FILES}`,
+      `You review code written by a team. Fix bugs, mismatched names between files, and missing imports. Return only files that need changes ({"files":[]} if none). Never return a file marked TRUNCATED PREVIEW. ${FILES}`,
       `Contract:\n${plan.contract}\n\n${ctx()}`, 1));
     apply(r.files); log(`Fixer changed ${(r.files || []).length} file(s)`);
   }
@@ -100,7 +111,7 @@ async function run(req) {
 }
 
 async function send() {
-  const q = $('#in').value.trim(); if (!q) return;
+  const q = $('#in').value.trim(); if (!q || $('#go').disabled) return;
   $('#in').value = ''; say(q, 'u'); $('#go').disabled = true;
   try { say(await run(q) || 'Done.'); const f = Object.keys(pend)[0]; if (f) review(f) } catch (e) { say('Error: ' + e.message); log('Error: ' + e.message) }
   $('#go').disabled = false;
@@ -192,10 +203,19 @@ function play() {
   if (!x) return log("Don't know how to run " + cur + " (use the terminal)");
   cloud(x, [cur], log);
 }
+// Each /api/run call is a brand-new sandbox, so installs from an earlier command are gone. Install first, in the same command.
+function prep(cmd) {
+  const pre = []; let pj = {}; try { pj = JSON.parse(files['package.json'] || '{}') } catch {}
+  if (/\b(node|npm|npx|tsx)\b/.test(cmd) && !/\bnpm (i|install|ci)\b/.test(cmd) && Object.keys({ ...pj.dependencies, ...pj.devDependencies }).length)
+    pre.push('npm install --no-audit --no-fund --loglevel=error');
+  if (/^\s*python3?\b/.test(cmd) && files['requirements.txt'] != null && !/pip3? install/.test(cmd))
+    pre.push('pip install -q -r requirements.txt');
+  return pre.length ? pre.join(' && ') + ' && ' + cmd : cmd;
+}
 async function remote(cmd, out) { // real execution: Vercel Sandbox via /api/run
   out('$ ' + cmd + '   (cloud sandbox...)');
   try {
-    const r = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files, cmd }) });
+    const r = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files, cmd: prep(cmd) }) });
     const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
     if (d.stdout) out(d.stdout.trimEnd()); if (d.stderr) out(d.stderr.trimEnd()); out('[exit ' + d.exitCode + ']'); return true;
   } catch (e) { out('Cloud run unavailable: ' + e.message); return false }
