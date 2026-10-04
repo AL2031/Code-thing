@@ -70,19 +70,20 @@ function apply(list) {
   }
   tree();
 }
+const ENV = 'The project runs two ways: HTML is previewed in a browser sandbox (use plain HTML/CSS/JavaScript with classic <script src="file.js"> tags; CDN libraries from cdn.jsdelivr.net or cdnjs.cloudflare.com are fine; no build step), and any other code runs from the terminal in a real Linux cloud sandbox (node, python3, bash, npm install, pip install all work, no interactive input). Make scripts non-interactive and print their results.';
 const FILES = 'Reply with JSON only: {"files":[{"path":"","content":"full file text"}]}';
 
 async function run(req) {
   log('Architect (gpt-oss-120b): planning');
   const plan = parse(await llm(ARCH,
-    'You lead a coding team. Split the request into at most 3 independent tasks. Each file belongs to exactly one task. Put shared names, function signatures and element ids in "contract". Reply with JSON only: {"summary":"","contract":"","tasks":[{"files":["path"],"instruction":""}]}',
+    ENV + ' You lead a coding team. Split the request into at most 3 independent tasks. Each file belongs to exactly one task. Put shared names, function signatures and element ids in "contract". Reply with JSON only: {"summary":"","contract":"","tasks":[{"files":["path"],"instruction":""}]}',
     `Project files:\n${ctx()}\n\nRequest: ${req}`, 1));
   const tasks = (plan.tasks || []).slice(0, 3);
   log(`Plan: ${tasks.length} task(s)`);
   const out = await Promise.all(tasks.map(async (t, i) => {
     const fl = (t.files || []).join(', ');
     log(`Coder ${i + 1} (Qwen3.8 27B): ${fl}`);
-    const r = parse(await llm(QW, `You are coder ${i + 1}. Write only your own files, complete and working. ${FILES}`,
+    const r = parse(await llm(QW, `${ENV} You are coder ${i + 1}. Write only your own files, complete and working. ${FILES}`,
       `Project files:\n${ctx()}\n\nContract:\n${plan.contract}\n\nYour files: ${fl}\nTask: ${t.instruction}\nOverall request: ${req}`, 1));
     apply(r.files); log(`Coder ${i + 1} done`); return r.files || [];
   }));
@@ -125,43 +126,122 @@ $('#ac').onclick = () => decide(true); $('#rj').onclick = () => decide(false);
 $('#aa').onclick = () => { for (const p in pend) { files[p] = pend[p]; mod[p]?.setValue(pend[p]) } pend = {}; save(); $('#diff').hidden = true; $('#editor').hidden = false; ed.layout(); show(cur) };
 
 /* ---------- panel: preview + terminal ---------- */
-const HOOK = '<script>["log","warn","error"].forEach(k=>{const o=console[k];console[k]=(...a)=>{parent.postMessage({l:k,t:a.join(" ")},"*");o(...a)}});addEventListener("error",e=>parent.postMessage({l:"error",t:e.message},"*"))<\/script>';
+function hook() {
+  const send = (l, t) => parent.postMessage({ l, t }, '*');
+  const fmt = a => a.map(x => { try { return typeof x === 'object' ? JSON.stringify(x) : String(x) } catch { return String(x) } }).join(' ');
+  ['log', 'info', 'warn', 'error'].forEach(k => { const o = console[k]; console[k] = (...a) => { send(k, fmt(a)); o.apply(console, a) } });
+  addEventListener('error', e => send('error', e.message + (e.lineno ? ' (line ' + e.lineno + ')' : '')));
+  addEventListener('unhandledrejection', e => send('error', 'Unhandled promise: ' + (e.reason?.message || e.reason)));
+  // sandboxed iframes have no real storage; give generated code an in-memory one
+  for (const k of ['localStorage', 'sessionStorage']) {
+    try { window[k].getItem('x') } catch {
+      const m = {};
+      Object.defineProperty(window, k, { value: { getItem: x => x in m ? m[x] : null, setItem: (x, v) => { m[x] = String(v) }, removeItem: x => { delete m[x] }, clear: () => { for (const x in m) delete m[x] }, key: i => Object.keys(m)[i] ?? null, get length() { return Object.keys(m).length } } });
+    }
+  }
+}
+const HOOK = `<script>(${hook})()<\/script>`;
 function ptab(t) {
   document.querySelectorAll('#panel .h [data-t]').forEach(h => h.className = h.dataset.t == t ? 'on' : '');
   ['out', 'term', 'pv'].forEach(k => $('#' + k).hidden = k != t);
   $('#panel').classList.toggle('big', t == 'pv'); if (t == 'term') $('#ti').focus();
 }
+const get = s => files[s.replace(/^(\.?\/)+/, '')];
 function preview() {
   let h = files['index.html']; if (h == null) { ptab('out'); return log('No index.html to preview') }
-  h = h.replace(/<script([^>]*?)src=["']([^"']+)["']([^>]*)><\/script>/g, (m, a, s, b) => files[s] != null ? `<script${a}${b}>${files[s].replace(/<\/script/g, '<\\/script')}<\/script>` : m)
-       .replace(/<link[^>]*href=["']([^"']+\.css)["'][^>]*>/g, (m, s) => files[s] != null ? `<style>${files[s]}</style>` : m);
-  $('#pv').srcdoc = HOOK + h; ptab('pv');
+  h = h.replace(/<script([^>]*?)src=["']([^"']+)["']([^>]*)><\/script>/g, (m, a, s, b) => get(s) != null ? `<script${a}${b}>${get(s).replace(/<\/script/g, '<\\/script')}<\/script>` : m)
+       .replace(/<link[^>]*href=["']([^"']+\.css)["'][^>]*>/g, (m, s) => get(s) != null ? `<style>${get(s)}</style>` : m);
+  $('#pv').srcdoc = /<head[^>]*>/i.test(h) ? h.replace(/<head[^>]*>/i, m => m + HOOK) : HOOK + h; ptab('pv');
 }
-function runjs(src) {
+function nodeBoot(F, main) { // tiny CommonJS shim so project files can require() each other
+  const C = {}, process = { argv: ['node', main], env: {}, platform: 'browser', exit() {}, cwd: () => '/', stdout: { write: s => console.log(String(s).replace(/\n$/, '')) } };
+  const req = p => {
+    const k = p.replace(/^(\.?\/)+/, ''), n = [k, k + '.js', k + '/index.js'].find(x => x in F);
+    if (!n) throw new Error(`Cannot find module '${p}' (only project files can be required in the browser)`);
+    if (C[n]) return C[n].exports;
+    const m = C[n] = { exports: {} }; new Function('require', 'module', 'exports', 'process', F[n])(req, m, m.exports, process); return m.exports;
+  };
+  req(main);
+}
+function pyBoot(F, main) { // Python via Pyodide (WebAssembly), loaded from a CDN
+  const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
+  s.onerror = () => console.error('Could not load Pyodide from the CDN');
+  s.onload = async () => {
+    try {
+      console.log('Loading Python runtime (first run takes a few seconds)...');
+      const py = await loadPyodide({ stdout: t => console.log(t), stderr: t => console.error(t) });
+      for (const [p, c] of Object.entries(F)) { p.split('/').slice(0, -1).reduce((a, x) => { const q = a ? a + '/' + x : x; try { py.FS.mkdir(q) } catch {} return q }, ''); py.FS.writeFile(p, c) }
+      await py.loadPackagesFromImports(F[main]);
+      await py.runPythonAsync(F[main]);
+    } catch (e) { console.error(e.message) }
+  };
+  document.head.append(s);
+}
+function runfile(name) {
+  const src = files[name], F = JSON.stringify(files).replace(/</g, '\\u003c'), n = JSON.stringify(name), py = name.endsWith('.py');
   const f = document.createElement('iframe'); f.sandbox = 'allow-scripts'; f.hidden = true;
-  f.srcdoc = HOOK + '<script>' + src.replace(/<\/script/g, '<\\/script') + '<\/script>'; document.body.append(f); setTimeout(() => f.remove(), 5000);
+  const code = py ? `<script>(${pyBoot})(${F},${n})<\/script>`
+    : /^\s*(import|export)\s/m.test(src) ? `<script type="module">${src.replace(/<\/script/g, '<\\/script')}<\/script>`
+    : `<script>(${nodeBoot})(${F},${n})<\/script>`;
+  f.srcdoc = HOOK + code; document.body.append(f); setTimeout(() => f.remove(), py ? 120000 : 15000);
 }
+const RUN = { py: 'python3', js: 'node', mjs: 'node', cjs: 'node', sh: 'bash', ts: 'npx -y tsx' };
+function play() {
+  if (/\.html?$/.test(cur)) return preview();
+  ptab('out'); const x = RUN[cur.split('.').pop()];
+  if (!x) return log("Don't know how to run " + cur + " (use the terminal)");
+  cloud(x, [cur], log);
+}
+async function remote(cmd, out) { // real execution: Vercel Sandbox via /api/run
+  out('$ ' + cmd + '   (cloud sandbox...)');
+  try {
+    const r = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files, cmd }) });
+    const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    if (d.stdout) out(d.stdout.trimEnd()); if (d.stderr) out(d.stderr.trimEnd()); out('[exit ' + d.exitCode + ']'); return true;
+  } catch (e) { out('Cloud run unavailable: ' + e.message); return false }
+}
+async function cloud(c, a, out = tp) {
+  if (await remote(c + ' ' + a.join(' '), out)) return;
+  if (/^(node|python3?)$/.test(c) && files[a[0]] != null) { out('Falling back to the in-browser runner (no npm, fs or pip installs)'); runfile(a[0]) }
+}
+function zip(F) { // minimal store-only .zip writer, no dependencies
+  const enc = new TextEncoder(), parts = [], cen = []; let off = 0;
+  const T = Array.from({ length: 256 }, (_, n) => { for (let k = 0; k < 8; k++) n = n & 1 ? 0xEDB88320 ^ (n >>> 1) : n >>> 1; return n >>> 0 });
+  const crc = b => { let c = ~0; for (const x of b) c = T[(c ^ x) & 255] ^ (c >>> 8); return ~c >>> 0 };
+  for (const [p, t] of Object.entries(F)) {
+    const n = enc.encode(p), d = enc.encode(t), c = crc(d), h = new DataView(new ArrayBuffer(30)), e = new DataView(new ArrayBuffer(46));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x800, true); h.setUint32(14, c, true); h.setUint32(18, d.length, true); h.setUint32(22, d.length, true); h.setUint16(26, n.length, true);
+    e.setUint32(0, 0x02014b50, true); e.setUint16(4, 20, true); e.setUint16(6, 20, true); e.setUint16(8, 0x800, true); e.setUint32(16, c, true); e.setUint32(20, d.length, true); e.setUint32(24, d.length, true); e.setUint16(28, n.length, true); e.setUint32(42, off, true);
+    parts.push(h.buffer, n, d); cen.push(e.buffer, n); off += 30 + n.length + d.length;
+  }
+  const end = new DataView(new ArrayBuffer(22)), k = cen.length / 2;
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, k, true); end.setUint16(10, k, true); end.setUint32(12, cen.reduce((a, x) => a + x.byteLength, 0), true); end.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, end.buffer], { type: 'application/zip' });
+}
+function dl() { const a = document.createElement('a'); a.href = URL.createObjectURL(zip(files)); a.download = 'project.zip'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4) }
+$('#dl').onclick = dl;
+$('#play').onclick = play;
 addEventListener('message', e => { if (e.data?.l) ($('#term').hidden ? log : tp)(`[${e.data.l}] ${e.data.t}`) });
 document.querySelectorAll('#panel .h [data-t]').forEach(h => h.onclick = () => h.dataset.t == 'pv' ? preview() : ptab(h.dataset.t));
 function tp(t) { const d = document.createElement('div'); d.textContent = t; $('#tl').append(d); $('#term').scrollTop = 1e9 }
 const sh = {
-  help: () => tp('ls  cat <file>  touch <file>  echo  clear  node <file> (browser sandbox)  run (preview)'),
+  help: () => tp('ls  cat  touch  echo  clear  run (HTML preview)  download (.zip). Anything else (node, python3, npm install, pip install, bash...) runs in a cloud Linux sandbox'),
   ls: () => tp(Object.keys(files).sort().join('  ')),
   cat: a => tp(files[a[0]] ?? 'cat: no such file'),
   touch: a => { if (a[0] && files[a[0]] == null) { files[a[0]] = ''; save(); show(a[0]) } },
   echo: a => tp(a.join(' ')), clear: () => $('#tl').innerHTML = '',
-  node: a => files[a[0]] != null ? runjs(files[a[0]]) : tp('node: no such file'), run: preview
+  node: a => cloud('node', a), python: a => cloud('python3', a), python3: a => cloud('python3', a), run: preview, download: dl
 };
 $('#ti').onkeydown = e => {
   if (e.key != 'Enter') return;
   const v = e.target.value.trim(); e.target.value = ''; tp('$ ' + v);
-  const [c, ...a] = v.split(/\s+/); if (c) (sh[c] || (() => tp(c + ': command not found')))(a);
+  const [c, ...a] = v.split(/\s+/); if (c) (sh[c] || (() => remote(v, tp)))(a);
 };
 $('#term').onclick = () => $('#ti').focus();
 
 /* ---------- quick open + command palette ---------- */
 const tg = s => { $(s).hidden = !$(s).hidden; ed?.layout() };
-const cmds = { 'File: New File': () => $('#new').click(), 'View: Toggle Sidebar': () => tg('#side'), 'View: Toggle Panel': () => tg('#panel'), 'View: Toggle AI Panel': () => tg('#chat'), 'Run: Open Preview': preview, 'Terminal: Focus': () => ptab('term'), 'Output: Clear': () => $('#out').textContent = '' };
+const cmds = { 'File: New File': () => $('#new').click(), 'View: Toggle Sidebar': () => tg('#side'), 'View: Toggle Panel': () => tg('#panel'), 'View: Toggle AI Panel': () => tg('#chat'), 'Run: Open Preview': preview, 'Run: Run Current File': play, 'File: Download Project (.zip)': dl, 'Terminal: Focus': () => ptab('term'), 'Output: Clear': () => $('#out').textContent = '' };
 function qp(cmd) {
   const box = $('#qp'), i = $('#qi'), l = $('#ql'); let sel = 0, list = [];
   const go = k => { box.hidden = true; if (k) cmd ? cmds[k]() : show(k) };
